@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Bekal10</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="site-header">
+        <div>
+          <p class="eyebrow">Asesmen</p>
+          <h1>Bekal10</h1>
+        </div>
+        <button id="newParticipantButton" class="ghost-button" type="button" hidden>
+          Peserta baru
+        </button>
+      </header>
+
+      <section id="profileSection" class="panel profile-panel">
+        <div class="section-heading">
+          <p class="eyebrow">Data peserta</p>
+          <h2>Isi data</h2>
+        </div>
+
+        <form id="profileForm" class="profile-form">
+          <label>
+            <span>Nama</span>
+            <input id="nameInput" name="name" type="text" autocomplete="name" required />
+          </label>
+          <label>
+            <span>Kelas</span>
+            <input id="classInput" name="studentClass" type="text" required />
+          </label>
+          <label>
+            <span>Umur</span>
+            <input id="ageInput" name="age" type="number" min="5" max="80" required />
+          </label>
+          <label>
+            <span>No. HP</span>
+            <input id="phoneInput" name="phone" type="tel" inputmode="tel" required />
+          </label>
+          <div class="form-actions">
+            <button class="primary-button" type="submit">Lanjut</button>
+            <p id="profileMessage" class="form-message" aria-live="polite"></p>
+          </div>
+        </form>
+      </section>
+
+      <section id="dashboardSection" hidden>
+        <div class="panel participant-panel">
+          <div>
+            <p class="eyebrow">Peserta aktif</p>
+            <h2 id="participantName">-</h2>
+          </div>
+          <div id="participantMeta" class="participant-meta"></div>
+        </div>
+
+        <section class="test-menu" aria-label="Pilih tes">
+          <button class="test-card" type="button" data-test-id="riasec">
+            <span>01</span>
+            <strong>Tes RIASEC</strong>
+            <small>Tes minat karier.</small>
+          </button>
+          <button class="test-card" type="button" data-test-id="vark">
+            <span>02</span>
+            <strong>Tes VARK</strong>
+            <small>Tes gaya belajar.</small>
+          </button>
+        </section>
+      </section>
+
+      <section id="testSection" class="panel test-panel" hidden>
+        <div class="test-topbar">
+          <button id="backToMenuButton" class="ghost-button" type="button">
+            Kembali
+          </button>
+          <div class="progress-summary">
+            <span id="progressText">0 dari 0 terjawab</span>
+            <span id="progressPercent">0%</span>
+          </div>
+        </div>
+
+        <div class="progress-track">
+          <div id="progressBar" class="progress-bar"></div>
+        </div>
+
+        <div class="section-heading test-heading">
+          <p id="activeTestLabel" class="eyebrow">Tes</p>
+          <h2 id="activeTestTitle">-</h2>
+          <p id="activeTestDescription" class="section-copy"></p>
+        </div>
+
+        <form id="quizForm" class="question-list"></form>
+
+        <div class="quiz-actions">
+          <button id="prevQuestionButton" class="ghost-button" type="button">
+            Sebelumnya
+          </button>
+          <p id="formMessage" class="form-message" aria-live="polite"></p>
+          <button id="nextQuestionButton" class="primary-button" type="button">
+            Berikutnya
+          </button>
+        </div>
+      </section>
+
+      <section id="resultPageSection" class="panel result-page" hidden>
+        <div class="result-topbar">
+          <button id="backFromResultButton" class="ghost-button" type="button">
+            Menu
+          </button>
+          <button id="retakeTestButton" class="ghost-button" type="button">
+            Ulang tes
+          </button>
+        </div>
+
+        <section id="resultSection" class="result-section">
+          <div class="section-heading">
+            <p class="eyebrow">Hasil</p>
+            <h2 id="resultTitle">Skor</h2>
+          </div>
+          <div id="resultGrid" class="result-grid"></div>
+          <p id="topProfile" class="top-profile"></p>
+          <p id="emailStatus" class="email-status" aria-live="polite"></p>
+        </section>
+
+        <section id="chatSection" class="chat-section">
+          <div class="section-heading">
+            <p class="eyebrow">Chatbot Bekal10</p>
+            <h2 id="chatTitle">Tanya soal hasil tes</h2>
+          </div>
+          <div id="chatMessages" class="chat-messages" aria-live="polite"></div>
+          <div id="chatSuggestions" class="chat-suggestions" aria-label="Rekomendasi pertanyaan"></div>
+          <form id="chatForm" class="chat-form">
+            <input
+              id="chatInput"
+              type="text"
+              placeholder="Tanya soal hasil tes ini..."
+              autocomplete="off"
+              required
+            />
+            <button class="primary-button" type="submit">Kirim</button>
+          </form>
+        </section>
+      </section>
+    </main>
+
+    <script src="script.js"></script>
+  </body>
+</html>
