@@ -280,6 +280,14 @@ h2 {
   line-height: 1.5;
 }
 
+.test-card .test-source {
+  max-width: 100%;
+  font-size: 0.76rem;
+  font-weight: 600;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
 .test-panel {
   margin-top: 18px;
 }
