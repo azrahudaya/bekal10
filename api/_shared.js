@@ -214,11 +214,13 @@ function recommendMajorsByRiasec(trait) {
   return map[trait] || ["Manajemen", "Ilmu Komunikasi", "Sistem Informasi", "Pendidikan", "Bisnis Digital"];
 }
 
-function getSmtpConfig() {
+function getSmtpConfig(toOverride = null) {
   const user = process.env.SMTP_USER || process.env.EMAIL_USER;
   const pass = (process.env.SMTP_PASS || process.env.EMAIL_PASS || "").replace(/\s+/g, "");
   const from = process.env.SMTP_FROM || user;
-  const to = splitEmails(process.env.SMTP_TO || process.env.EMAIL_TO);
+  const to = Array.isArray(toOverride)
+    ? toOverride.filter(isValidEmailAddress)
+    : splitEmails(process.env.SMTP_TO || process.env.EMAIL_TO);
 
   return {
     ready: Boolean(user && pass && from && to.length),
@@ -247,6 +249,7 @@ function buildResultsEmail(body) {
     `Kelas: ${participant.studentClass || "-"}`,
     `Umur: ${participant.age || "-"}`,
     `No. HP: ${participant.phone || "-"}`,
+    `Email: ${participant.email || "-"}`,
     "",
     "Hasil RIASEC:",
     ...(riasecRows.length ? riasecRows.map((row) => `- ${row.label}: ${row.score}`) : ["- Belum selesai"]),
@@ -265,6 +268,7 @@ function buildResultsEmail(body) {
       <tr><td>Kelas</td><td>${escapeHtml(participant.studentClass || "-")}</td></tr>
       <tr><td>Umur</td><td>${escapeHtml(participant.age || "-")}</td></tr>
       <tr><td>No. HP</td><td>${escapeHtml(participant.phone || "-")}</td></tr>
+      <tr><td>Email</td><td>${escapeHtml(participant.email || "-")}</td></tr>
     </table>
     <h3>Hasil RIASEC</h3>
     ${riasecRows.length ? scoreTable(riasecRows) : "<p>Belum selesai.</p>"}
@@ -273,6 +277,308 @@ function buildResultsEmail(body) {
   `;
 
   return { text, html };
+}
+
+async function sendUserAttemptEmail(body) {
+  const participant = body.participant || {};
+  const attempt = body.attempt || {};
+  const recipient = String(participant.email || "").trim();
+  const testLabel = attempt.testLabel || "tes";
+
+  if (!attempt.testId || !attempt.scores) {
+    return { sent: false, skipped: true, reason: "NO_ATTEMPT", message: "Tidak ada hasil tes baru untuk email peserta." };
+  }
+
+  if (!isValidEmailAddress(recipient)) {
+    return { sent: false, skipped: true, reason: "NO_USER_EMAIL", message: "Email peserta belum valid." };
+  }
+
+  const smtpConfig = getSmtpConfig([recipient]);
+  if (!smtpConfig.ready) {
+    return { sent: false, skipped: true, reason: "SMTP_MISSING", message: "SMTP belum lengkap, email peserta belum terkirim." };
+  }
+
+  const email = await buildUserResultsEmail(body);
+  try {
+    await sendSmtpMail({
+      ...smtpConfig,
+      subject: `Hasil ${testLabel} Bekal10`,
+      text: email.text,
+      html: email.html,
+    });
+
+    return { sent: true, skipped: false, reason: "SENT", message: `Email hasil ${testLabel} terkirim ke peserta.` };
+  } catch (error) {
+    return { sent: false, skipped: false, reason: "USER_EMAIL_FAILED", message: `Email hasil ${testLabel} gagal dikirim ke peserta.` };
+  }
+}
+
+async function sendAdminResultsEmail(body) {
+  const riasec = body.riasec;
+  const vark = body.vark;
+
+  if (!riasec || !vark) {
+    return { sent: false, skipped: true, reason: "WAITING_FOR_BOTH_TESTS", message: "Rekap admin dikirim setelah RIASEC dan VARK selesai." };
+  }
+
+  const fingerprint = `${riasec.id}:${vark.id}`;
+  if (body.participant?.emailSentFingerprint === fingerprint) {
+    return { sent: false, skipped: true, reason: "ADMIN_ALREADY_SENT", message: "Rekap admin sudah pernah dikirim." };
+  }
+
+  const smtpConfig = getSmtpConfig();
+  if (!smtpConfig.ready) {
+    return { sent: false, skipped: true, reason: "SMTP_MISSING", message: "SMTP belum lengkap, rekap admin belum terkirim." };
+  }
+
+  const email = buildResultsEmail(body);
+  try {
+    await sendSmtpMail({
+      ...smtpConfig,
+      subject: `Hasil Tes Bekal10 ${body.participant?.name || "Peserta"}`,
+      text: email.text,
+      html: email.html,
+    });
+
+    return { sent: true, skipped: false, reason: "SENT", message: "Rekap admin terkirim." };
+  } catch (error) {
+    return { sent: false, skipped: false, reason: "ADMIN_EMAIL_FAILED", message: "Rekap admin gagal dikirim." };
+  }
+}
+
+function buildSendResultsMessage(userEmailResult, adminEmailResult) {
+  const prefix = process.env.VERCEL ? "Hasil diterima." : "JSON tersimpan.";
+  return [
+    prefix,
+    userEmailResult.message,
+    adminEmailResult.message,
+  ].filter(Boolean).join(" ");
+}
+
+async function buildUserResultsEmail(body) {
+  const participant = body.participant || {};
+  const attempt = body.attempt || {};
+  const labels = body.labels?.[attempt.testId] || {};
+  const rows = scoreRows(attempt.scores, labels);
+  const topRows = getTopScoreRows(rows);
+  const summary = await buildAiEmailSummary(body, rows);
+  const testLabel = attempt.testLabel || "Tes Bekal10";
+
+  const text = [
+    `Hasil ${testLabel} Bekal10`,
+    "",
+    `Halo ${participant.name || "Peserta"},`,
+    `Tes selesai: ${testLabel}`,
+    `Waktu submit: ${formatDate(attempt.createdAt)}`,
+    "",
+    `Kategori tertinggi: ${topRows.map((row) => `${row.label} (${row.score})`).join(", ") || "-"}`,
+    "",
+    "Skor:",
+    ...(rows.length ? rows.map((row) => `- ${row.label}: ${row.score}`) : ["- Belum ada skor"]),
+    "",
+    "Ringkasan:",
+    summary,
+  ].join("\n");
+
+  const html = buildUserResultsEmailHtml({
+    participant,
+    attempt,
+    rows,
+    summary,
+    testLabel,
+    topRows,
+  });
+
+  return { text, html };
+}
+
+async function buildAiEmailSummary(body, rows) {
+  const fallback = buildFallbackEmailSummary(body, rows);
+  if (!process.env.DEEPSEEK_API_KEY) return fallback;
+
+  try {
+    const baseUrl = (process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com").replace(/\/$/, "");
+    const model = process.env.DEEPSEEK_MODEL || "deepseek-v4-flash";
+    const apiResponse = await fetch(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        messages: buildEmailSummaryMessages(body, rows),
+        temperature: 0.2,
+        max_tokens: 550,
+        stream: false,
+        user_id: sanitizeUserId(body.participant?.id || "bekal10-user"),
+      }),
+    });
+
+    const data = await apiResponse.json().catch(() => ({}));
+    if (!apiResponse.ok) return fallback;
+
+    return cleanReply(getDeepSeekReply(data)) || fallback;
+  } catch (error) {
+    return fallback;
+  }
+}
+
+function buildEmailSummaryMessages(body, rows) {
+  const participant = body.participant || {};
+  const attempt = body.attempt || {};
+  const labels = body.labels || {};
+  const scoreText = rows.map((row) => `${row.label}: ${row.score}`).join(", ");
+  const riasecScores = formatScores(body.riasec?.scores, labels.riasec);
+  const varkScores = formatScores(body.vark?.scores, labels.vark);
+
+  return [
+    {
+      role: "system",
+      content: [
+        "Kamu menulis ringkasan hasil tes Bekal10 untuk email peserta.",
+        "Jawab dalam Bahasa Indonesia.",
+        "Gunakan plain text saja, tanpa markdown tebal dan tanpa tabel.",
+        "Tulis 1 paragraf pembuka pendek dan 3 bullet yang diawali tanda '-'.",
+        "Fokus pada tes yang baru selesai. Jika hasil tes lain tersedia, sebutkan hanya sebagai konteks pendukung.",
+        "Jangan memberi diagnosis psikologis, jangan membuat klaim pasti, dan jangan terlalu panjang.",
+      ].join("\n"),
+    },
+    {
+      role: "user",
+      content: [
+        `Nama: ${participant.name || "Peserta"}`,
+        `Kelas: ${participant.studentClass || "-"}`,
+        `Umur: ${participant.age || "-"}`,
+        `Tes yang baru selesai: ${attempt.testLabel || attempt.testId || "-"}`,
+        `Skor tes ini: ${scoreText || "belum ada"}`,
+        `Skor RIASEC terbaru: ${riasecScores || "belum ada"}`,
+        `Skor VARK terbaru: ${varkScores || "belum ada"}`,
+      ].join("\n"),
+    },
+  ];
+}
+
+function buildFallbackEmailSummary(body, rows) {
+  const attempt = body.attempt || {};
+  const topRows = getTopScoreRows(rows);
+  const topText = topRows.map((row) => `${row.label} (${row.score})`).join(", ") || "belum terlihat jelas";
+
+  if (attempt.testId === "vark") {
+    return [
+      `Hasil VARK kamu paling menonjol pada ${topText}. Ini bisa dipakai untuk memilih cara belajar yang terasa paling nyaman.`,
+      "- Gunakan gaya belajar terkuat sebagai strategi utama saat memahami materi baru.",
+      "- Kombinasikan dengan gaya belajar lain agar proses belajar tidak terlalu sempit.",
+      "- Jika ingin memilih jurusan atau karier, jadikan hasil RIASEC sebagai dasar utama dan VARK sebagai pendukung cara belajar.",
+    ].join("\n");
+  }
+
+  const recommendations = topRows.length ? recommendMajorsByRiasec(topRows[0].key) : [];
+  return [
+    `Hasil RIASEC kamu paling menonjol pada ${topText}. Ini menunjukkan area minat yang bisa mulai kamu eksplorasi lebih serius.`,
+    "- Perhatikan aktivitas yang membuat kamu nyaman, penasaran, dan tahan mengerjakannya lebih lama.",
+    "- Gunakan hasil ini sebagai titik awal diskusi jurusan, kegiatan, portofolio, atau pilihan karier.",
+    recommendations.length
+      ? `- Rekomendasi awal yang bisa dipertimbangkan: ${recommendations.slice(0, 3).join(", ")}.`
+      : "- Lengkapi juga tes lain agar gambaran belajar dan minat kamu lebih utuh.",
+  ].join("\n");
+}
+
+function buildUserResultsEmailHtml({ participant, attempt, rows, summary, testLabel, topRows }) {
+  const topText = topRows.map((row) => `${row.label} (${row.score})`).join(", ") || "-";
+  const preheader = `Hasil ${testLabel} kamu sudah siap.`;
+
+  return `
+    <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">${escapeHtml(preheader)}</div>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0;padding:0;background:#f4f4f0;font-family:Arial,Helvetica,sans-serif;color:#111111;">
+      <tr>
+        <td align="center" style="padding:28px 14px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:680px;background:#ffffff;border:2px solid #111111;border-radius:8px;overflow:hidden;">
+            <tr>
+              <td style="background:#ffd000;border-bottom:2px solid #111111;padding:24px 26px;">
+                <div style="font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#111111;">Bekal10</div>
+                <h1 style="margin:8px 0 0;font-size:28px;line-height:1.15;color:#111111;">Hasil ${escapeHtml(testLabel)}</h1>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:24px 26px;">
+                <p style="margin:0 0 12px;font-size:16px;line-height:1.6;">Halo <strong>${escapeHtml(participant.name || "Peserta")}</strong>, ini hasil tes yang baru kamu selesaikan.</p>
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:18px 0;border:1px solid #dddddd;border-radius:8px;">
+                  <tr>
+                    <td style="padding:12px 14px;border-bottom:1px solid #eeeeee;font-size:13px;color:#666666;">Tes selesai</td>
+                    <td style="padding:12px 14px;border-bottom:1px solid #eeeeee;font-size:13px;font-weight:700;text-align:right;">${escapeHtml(testLabel)}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding:12px 14px;border-bottom:1px solid #eeeeee;font-size:13px;color:#666666;">Waktu submit</td>
+                    <td style="padding:12px 14px;border-bottom:1px solid #eeeeee;font-size:13px;font-weight:700;text-align:right;">${escapeHtml(formatDate(attempt.createdAt))}</td>
+                  </tr>
+                  <tr>
+                    <td style="padding:12px 14px;font-size:13px;color:#666666;">Kategori tertinggi</td>
+                    <td style="padding:12px 14px;font-size:13px;font-weight:700;text-align:right;">${escapeHtml(topText)}</td>
+                  </tr>
+                </table>
+
+                <h2 style="margin:22px 0 12px;font-size:18px;line-height:1.3;color:#111111;">Skor</h2>
+                ${scoreEmailTable(rows, attempt.testId)}
+
+                <h2 style="margin:24px 0 12px;font-size:18px;line-height:1.3;color:#111111;">Ringkasan AI</h2>
+                <div style="border-left:4px solid #ffd000;padding:2px 0 2px 14px;">
+                  ${summaryToHtml(summary)}
+                </div>
+
+                <p style="margin:24px 0 0;font-size:12px;line-height:1.6;color:#666666;">Hasil ini adalah bahan refleksi awal, bukan penentu tunggal pilihan jurusan atau karier. Gunakan bersama diskusi dengan orang tua, guru, atau konselor.</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  `;
+}
+
+function scoreEmailTable(rows, testId) {
+  if (!rows.length) return `<p style="margin:0;font-size:14px;line-height:1.6;">Belum ada skor.</p>`;
+
+  const maxScore = maxScoreForTest(testId, rows);
+  const body = rows.map((row) => {
+    const percent = Math.max(0, Math.min(100, Math.round((Number(row.score) / maxScore) * 100)));
+    return `
+      <tr>
+        <td style="padding:12px 0;border-bottom:1px solid #eeeeee;">
+          <div style="font-size:14px;font-weight:700;color:#111111;">${escapeHtml(row.label)}</div>
+          <div style="margin-top:8px;background:#eeeeee;border-radius:999px;height:8px;overflow:hidden;">
+            <div style="background:#111111;width:${percent}%;height:8px;line-height:8px;">&nbsp;</div>
+          </div>
+        </td>
+        <td style="padding:12px 0 12px 14px;border-bottom:1px solid #eeeeee;text-align:right;font-size:14px;font-weight:700;color:#111111;white-space:nowrap;">${escapeHtml(row.score)} / ${escapeHtml(maxScore)}</td>
+      </tr>
+    `;
+  }).join("");
+
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">${body}</table>`;
+}
+
+function summaryToHtml(summary) {
+  const lines = String(summary || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const paragraphs = [];
+  const bullets = [];
+
+  lines.forEach((line) => {
+    if (/^[-*]\s+/.test(line)) {
+      bullets.push(line.replace(/^[-*]\s+/, ""));
+    } else {
+      paragraphs.push(line);
+    }
+  });
+
+  const paragraphHtml = paragraphs
+    .map((line) => `<p style="margin:0 0 10px;font-size:14px;line-height:1.6;color:#222222;">${escapeHtml(line)}</p>`)
+    .join("");
+  const bulletHtml = bullets.length
+    ? `<ul style="margin:8px 0 0 18px;padding:0;font-size:14px;line-height:1.6;color:#222222;">${bullets.map((line) => `<li style="margin:0 0 8px;">${escapeHtml(line)}</li>`).join("")}</ul>`
+    : "";
+
+  return paragraphHtml + bulletHtml;
 }
 
 function saveResultJson(body) {
@@ -336,10 +642,23 @@ function safeFilePart(value) {
 function scoreRows(scores = {}, labels = {}) {
   return Object.entries(scores)
     .map(([key, score]) => ({
+      key,
       label: labels[key] || key,
       score,
     }))
     .sort((a, b) => b.score - a.score);
+}
+
+function getTopScoreRows(rows) {
+  if (!rows.length) return [];
+  const topScore = rows[0].score;
+  return rows.filter((row) => row.score === topScore);
+}
+
+function maxScoreForTest(testId, rows = []) {
+  if (testId === "riasec") return 28;
+  if (testId === "vark") return 16;
+  return Math.max(1, ...rows.map((row) => Number(row.score) || 0));
 }
 
 function formatDate(value) {
@@ -458,6 +777,10 @@ function splitEmails(value = "") {
     .filter(Boolean);
 }
 
+function isValidEmailAddress(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || "").trim());
+}
+
 function extractEmail(value) {
   const match = String(value).match(/<([^>]+)>/);
   return (match ? match[1] : value).trim();
@@ -479,6 +802,7 @@ function escapeHtml(value) {
 module.exports = {
   buildChatMessages,
   buildFallbackReply,
+  buildSendResultsMessage,
   buildResultsEmail,
   cleanReply,
   getDeepSeekReply,
@@ -486,6 +810,8 @@ module.exports = {
   readBody,
   sanitizeUserId,
   saveResultJson,
+  sendAdminResultsEmail,
   sendJson,
   sendSmtpMail,
+  sendUserAttemptEmail,
 };

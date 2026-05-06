@@ -315,6 +315,7 @@ function createParticipant(formData) {
     studentClass: formData.get("studentClass").trim(),
     age: Number(formData.get("age")),
     phone: formData.get("phone").trim(),
+    email: formData.get("email").trim(),
     createdAt: new Date().toISOString(),
     attempts: [],
     emailSentFingerprint: null,
@@ -347,6 +348,7 @@ function showDashboard() {
     <span class="meta-pill">Kelas ${escapeHtml(state.participant.studentClass)}</span>
     <span class="meta-pill">${state.participant.age} tahun</span>
     <span class="meta-pill">${escapeHtml(state.participant.phone)}</span>
+    <span class="meta-pill">${escapeHtml(state.participant.email || "-")}</span>
   `;
 }
 
@@ -627,6 +629,14 @@ async function submitAttemptResult(attempt) {
       return;
     }
 
+    if (data.userEmailSent) {
+      const currentAttempt = state.participant.attempts.find((item) => item.id === attempt.id);
+      if (currentAttempt) {
+        currentAttempt.userEmailSentAt = new Date().toISOString();
+      }
+      saveCurrentParticipant();
+    }
+
     if (data.emailSent) {
       const riasec = getLatestAttempt("riasec");
       const vark = getLatestAttempt("vark");
@@ -763,15 +773,25 @@ function escapeHtml(value) {
 function handleProfileSubmit(event) {
   event.preventDefault();
   const formData = new FormData(profileForm);
+  const email = formData.get("email").trim();
 
   if (!formData.get("phone").trim().match(/^[0-9+\-\s()]{8,}$/)) {
     profileMessage.textContent = "No. HP belum valid.";
     return;
   }
 
+  if (!isValidEmail(email)) {
+    profileMessage.textContent = "Email belum valid.";
+    return;
+  }
+
   state.participant = createParticipant(formData);
   saveCurrentParticipant();
   showDashboard();
+}
+
+function isValidEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || "").trim());
 }
 
 function handleAnswerChange() {
